@@ -1,171 +1,224 @@
-<script>
-  const video = document.getElementById('webcam');
-  const canvas = document.getElementById('canvas');
-  const ctx = canvas.getContext('2d');
-  const overlayBox = document.getElementById('overlayBox');
-  const switchBtn = document.getElementById('switchBtn');
-  const languageBtn = document.getElementById('languageBtn');
-  const micBtn = document.getElementById('micBtn');
-
-  let stream;
-  let apiKey = '';
-  let usingFrontCamera = false;
-  let analyzing = false;
-  let currentLanguage = 'en';
-  let recognition;
-
-  fetch("api.txt")
-    .then(res => res.text())
-    .then(key => apiKey = key.trim());
-
-  async function setupWebcam() {
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JARVIS Vision Call</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: black;
+      color: white;
+      font-family: 'Segoe UI', sans-serif;
     }
-
-    const constraints = {
-      video: {
-        facingMode: usingFrontCamera ? "user" : "environment"
-      },
-      audio: false
-    };
-
-    stream = await navigator.mediaDevices.getUserMedia(constraints);
-    video.srcObject = stream;
-
-    return new Promise(resolve => {
-      video.onloadedmetadata = () => resolve();
-    });
-  }
-
-  function speak(text, lang = 'en') {
-    const synth = window.speechSynthesis;
-    synth.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = lang === 'hi' ? 'hi-IN' : 'en-US';
-    synth.speak(utterance);
-  }
-
-  async function captureFrame() {
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    return new Promise((resolve) => {
-      canvas.toBlob(blob => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result.split(',')[1]);
-        reader.readAsDataURL(blob);
-      }, 'image/jpeg');
-    });
-  }
-
-  async function scanWithGemini() {
-    if (analyzing) return;
-    analyzing = true;
-    overlayBox.innerText = currentLanguage === 'hi' ? "विश्लेषण किया जा रहा है..." : "Analyzing...";
-
-    const base64Image = await captureFrame();
-
-    try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{
-              parts: [
-                { inlineData: { mimeType: 'image/jpeg', data: base64Image } },
-                { text: "What do you see in this image in simple terms?" }
-              ]
-            }]
-          })
-        }
-      );
-
-      const data = await response.json();
-      const message = data?.candidates?.[0]?.content?.parts?.[0]?.text || (currentLanguage === 'hi' ? "छवि का विश्लेषण नहीं किया जा सका।" : "Could not analyze image.");
-
-      overlayBox.innerText = message;
-      speak(message, currentLanguage);
-    } catch (err) {
-      overlayBox.innerText = currentLanguage === 'hi' ? "विश्लेषण विफल रहा।" : "Failed to analyze.";
-      console.error(err);
-    } finally {
-      analyzing = false;
+    video, canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+      z-index: 1;
     }
-  }
-
-  function startVoiceCommand() {
-    if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
-      overlayBox.innerText = "🎙️ Your browser does not support voice recognition.";
-      return;
+    #overlayBox {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 15px;
+      border: 2px solid #00ffcc;
+      max-width: 420px;
+      font-size: 16px;
+      z-index: 3;
     }
+    #switchBtn, #languageBtn, #micBtn {
+      position: absolute;
+      top: 20px;
+      padding: 10px 20px;
+      background: #00ffcc;
+      border: none;
+      color: black;
+      font-weight: bold;
+      border-radius: 5px;
+      cursor: pointer;
+      z-index: 4;
+    }
+    #switchBtn { left: 20px; }
+    #languageBtn { right: 20px; }
+    #micBtn { top: 70px; right: 20px; }
+  </style>
+</head>
+<body>
+  <video id="webcam" autoplay muted playsinline></video>
+  <canvas id="canvas"></canvas>
+  <button id="switchBtn">Switch Camera</button>
+  <button id="languageBtn">Convert to Hindi</button>
+  <button id="micBtn">Activate Mic</button>
+  <div id="overlayBox">JARVIS is online...</div>
 
-    if (recognition) recognition.stop();
+  <script>
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const overlayBox = document.getElementById('overlayBox');
+    const switchBtn = document.getElementById('switchBtn');
+    const languageBtn = document.getElementById('languageBtn');
+    const micBtn = document.getElementById('micBtn');
 
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    recognition = new SpeechRecognition();
-    recognition.lang = currentLanguage === 'hi' ? 'hi-IN' : 'en-US';
-    recognition.interimResults = false;
-    recognition.continuous = true;
+    let stream;
+    let apiKey = '';
+    let usingFrontCamera = false;
+    let analyzing = false;
+    let currentLanguage = 'en';
+    let recognition;
 
-    recognition.onresult = (event) => {
-      const transcript = event.results[event.results.length - 1][0].transcript.trim().toLowerCase();
-      console.log("Heard:", transcript);
-      const keywords = [
-        "what is this",
-        "ye kya hai",
-        "यह क्या है",
-        "व्हाट इस दिस"
-      ];
-      if (keywords.some(keyword => transcript.includes(keyword))) {
-        scanWithGemini();
+    fetch("api.txt")
+      .then(res => res.text())
+      .then(key => apiKey = key.trim());
+
+    async function setupWebcam() {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
       }
-    };
 
-    recognition.onerror = (e) => {
-      console.warn("Speech error:", e.error);
-      setTimeout(() => startVoiceCommand(), 1000);
-    };
+      const constraints = {
+        video: {
+          facingMode: usingFrontCamera ? "user" : "environment"
+        },
+        audio: false
+      };
 
-    recognition.onend = () => {
-      setTimeout(() => startVoiceCommand(), 1000);
-    };
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+      video.srcObject = stream;
 
-    recognition.start();
-    overlayBox.innerText = currentLanguage === 'hi'
-      ? "🎤 माइक्रोफोन चालू है..."
-      : "🎤 Microphone is active...";
-  }
+      return new Promise(resolve => {
+        video.onloadedmetadata = () => resolve();
+      });
+    }
 
-  // Button Listeners
-  switchBtn.addEventListener('click', () => {
-    usingFrontCamera = !usingFrontCamera;
-    setupWebcam();
-  });
+    function speak(text, lang = 'en') {
+      const synth = window.speechSynthesis;
+      synth.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = lang === 'hi' ? 'hi-IN' : 'en-US';
+      synth.speak(utterance);
+    }
 
-  languageBtn.addEventListener('click', () => {
-    currentLanguage = currentLanguage === 'en' ? 'hi' : 'en';
-    languageBtn.innerText = currentLanguage === 'en' ? 'Convert to Hindi' : 'Convert to English';
-    overlayBox.innerText = currentLanguage === 'hi' ? "JARVIS ऑनलाइन है..." : "JARVIS is online...";
-  });
-
-  micBtn.addEventListener('click', () => {
-    startVoiceCommand();
-  });
-
-  // Startup
-  setupWebcam().then(() => {
-    requestAnimationFrame(updateVideoCanvas);
-  });
-
-  function updateVideoCanvas() {
-    if (video.readyState >= 2) {
+    async function captureFrame() {
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      return new Promise((resolve) => {
+        canvas.toBlob(blob => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result.split(',')[1]);
+          reader.readAsDataURL(blob);
+        }, 'image/jpeg');
+      });
     }
-    requestAnimationFrame(updateVideoCanvas);
-  }
-</script>
+
+    async function scanWithGemini() {
+      if (analyzing) return;
+      analyzing = true;
+      overlayBox.innerText = currentLanguage === 'hi' ? "विश्लेषण किया जा रहा है..." : "Analyzing...";
+
+      const base64Image = await captureFrame();
+
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{
+                parts: [
+                  { inlineData: { mimeType: 'image/jpeg', data: base64Image } },
+                  { text: "What do you see in this image in simple terms?" }
+                ]
+              }]
+            })
+          }
+        );
+
+        const data = await response.json();
+        const message = data?.candidates?.[0]?.content?.parts?.[0]?.text || (currentLanguage === 'hi' ? "छवि का विश्लेषण नहीं किया जा सका।" : "Could not analyze image.");
+
+        overlayBox.innerText = message;
+        speak(message, currentLanguage);
+      } catch (err) {
+        overlayBox.innerText = currentLanguage === 'hi' ? "विश्लेषण विफल रहा।" : "Failed to analyze.";
+        console.error(err);
+      } finally {
+        analyzing = false;
+      }
+    }
+
+    function startVoiceCommandOnce() {
+      if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
+        overlayBox.innerText = "🎙️ Voice recognition not supported.";
+        return;
+      }
+
+      if (recognition) recognition.stop();
+
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognition = new SpeechRecognition();
+      recognition.lang = currentLanguage === 'hi' ? 'hi-IN' : 'en-US';
+      recognition.interimResults = false;
+      recognition.continuous = false;
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript.trim().toLowerCase();
+        console.log("Heard:", transcript);
+        const keywords = ["what is this", "ye kya hai", "यह क्या है", "व्हाट इस दिस"];
+        if (keywords.some(k => transcript.includes(k))) {
+          scanWithGemini();
+        } else {
+          overlayBox.innerText = currentLanguage === 'hi' ? "कोई मान्य कमांड नहीं मिली।" : "No valid command heard.";
+        }
+      };
+
+      recognition.onerror = (e) => {
+        console.warn("Speech error:", e.error);
+      };
+
+      recognition.onend = () => {
+        overlayBox.innerText = currentLanguage === 'hi' ? "🎤 माइक्रोफोन बंद हो गया। फिर से सक्रिय करें।" : "🎤 Mic stopped. Tap to reactivate.";
+      };
+
+      recognition.start();
+      overlayBox.innerText = currentLanguage === 'hi' ? "🎤 सुन रहा है..." : "🎤 Listening...";
+    }
+
+    switchBtn.addEventListener('click', () => {
+      usingFrontCamera = !usingFrontCamera;
+      setupWebcam();
+    });
+
+    languageBtn.addEventListener('click', () => {
+      currentLanguage = currentLanguage === 'en' ? 'hi' : 'en';
+      languageBtn.innerText = currentLanguage === 'en' ? 'Convert to Hindi' : 'Convert to English';
+      overlayBox.innerText = currentLanguage === 'hi' ? "JARVIS ऑनलाइन है..." : "JARVIS is online...";
+    });
+
+    micBtn.addEventListener('click', () => {
+      startVoiceCommandOnce();
+    });
+
+    setupWebcam().then(() => {
+      requestAnimationFrame(updateVideoCanvas);
+    });
+
+    function updateVideoCanvas() {
+      if (video.readyState >= 2) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      }
+      requestAnimationFrame(updateVideoCanvas);
+    }
+  </script>
+</body>
+</html>
