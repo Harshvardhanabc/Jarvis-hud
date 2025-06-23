@@ -2,17 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>JARVIS HUD</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JARVIS Vision Call</title>
   <style>
     body {
       margin: 0;
       overflow: hidden;
       background: black;
-      font-family: 'Segoe UI', sans-serif;
       color: white;
+      font-family: 'Segoe UI', sans-serif;
     }
-    video {
+    video, canvas {
       position: absolute;
       top: 0;
       left: 0;
@@ -21,110 +21,190 @@
       object-fit: cover;
       z-index: 1;
     }
-    canvas {
+    #overlayBox {
       position: absolute;
-      top: 0;
-      left: 0;
-      z-index: 2;
-    }
-    #descriptionBox {
-      position: absolute;
-      bottom: 30px;
-      left: 30px;
+      bottom: 20px;
+      left: 20px;
       background: rgba(0, 0, 0, 0.7);
       padding: 15px;
       border: 2px solid #00ffcc;
-      max-width: 400px;
+      max-width: 420px;
       font-size: 16px;
       z-index: 3;
     }
+    #switchBtn, #languageBtn {
+      position: absolute;
+      top: 20px;
+      padding: 10px 20px;
+      background: #00ffcc;
+      border: none;
+      color: black;
+      font-weight: bold;
+      border-radius: 5px;
+      cursor: pointer;
+      z-index: 4;
+    }
+    #switchBtn { left: 20px; }
+    #languageBtn { right: 20px; }
   </style>
-  <!-- TensorFlow.js and COCO-SSD -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.2"></script>
 </head>
 <body>
   <video id="webcam" autoplay muted playsinline></video>
   <canvas id="canvas"></canvas>
-  <div id="descriptionBox">JARVIS is initializing...</div>
+  <button id="switchBtn">Switch Camera</button>
+  <button id="languageBtn">Convert to Hindi</button>
+  <div id="overlayBox">JARVIS is online...</div>
 
   <script>
-    let model;
-    let apiKey = '';
-    const detectedLabels = {};
     const video = document.getElementById('webcam');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
-    const descBox = document.getElementById('descriptionBox');
+    const overlayBox = document.getElementById('overlayBox');
+    const switchBtn = document.getElementById('switchBtn');
+    const languageBtn = document.getElementById('languageBtn');
 
-    async function loadAPIKey() {
-      const response = await fetch('gemini_key.txt');
-      apiKey = (await response.text()).trim();
-    }
+    let stream;
+    let apiKey = '';
+    let usingFrontCamera = false;
+    let analyzing = false;
+    let currentLanguage = 'en';
+
+    fetch("gemini_key.txt")
+      .then(res => res.text())
+      .then(key => apiKey = key.trim());
 
     async function setupWebcam() {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+
+      const constraints = {
+        video: {
+          facingMode: usingFrontCamera ? "user" : "environment"
+        }
+      };
+
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
       video.srcObject = stream;
+
       return new Promise(resolve => {
-        video.onloadedmetadata = () => resolve(video);
+        video.onloadedmetadata = () => resolve();
       });
     }
 
-    async function explain(label) {
-      const now = Date.now();
-      if (detectedLabels[label] && now - detectedLabels[label] < 10000) return;
-      detectedLabels[label] = now;
-
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: `What is a ${label} in simple terms?` }] }]
-          })
-        }
-      );
-
-      const data = await response.json();
-      const message = data?.candidates?.[0]?.content?.parts?.[0]?.text || 'Could not explain.';
-      descBox.innerText = `${label.toUpperCase()}: ${message}`;
-
+    function speak(text, lang = 'en') {
       const synth = window.speechSynthesis;
       synth.cancel();
-      synth.speak(new SpeechSynthesisUtterance(`${label}. ${message}`));
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = lang === 'hi' ? 'hi-IN' : 'en-US';
+      synth.speak(utterance);
     }
 
-    async function detectFrame() {
+    async function captureFrame() {
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
-
-      const predictions = await model.detect(video);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      predictions.forEach(pred => {
-        const [x, y, width, height] = pred.bbox;
-        ctx.strokeStyle = '#00ffcc';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(x, y, width, height);
-        ctx.fillStyle = '#00ffcc';
-        ctx.font = '16px Segoe UI';
-        ctx.fillText(pred.class, x, y > 20 ? y - 5 : y + 15);
-
-        explain(pred.class);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      return new Promise((resolve) => {
+        canvas.toBlob(blob => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result.split(',')[1]);
+          reader.readAsDataURL(blob);
+        }, 'image/jpeg');
       });
-
-      requestAnimationFrame(detectFrame);
     }
 
-    async function main() {
-      await loadAPIKey();
-      await setupWebcam();
-      model = await cocoSsd.load();
-      detectFrame();
+    async function scanWithGemini() {
+      if (analyzing) return;
+      analyzing = true;
+      overlayBox.innerText = currentLanguage === 'hi' ? "विश्लेषण किया जा रहा है..." : "Analyzing...";
+
+      const base64Image = await captureFrame();
+
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{
+                parts: [
+                  { inlineData: { mimeType: 'image/jpeg', data: base64Image } },
+                  { text: "What do you see in this image in simple terms?" }
+                ]
+              }]
+            })
+          }
+        );
+
+        const data = await response.json();
+        const message = data?.candidates?.[0]?.content?.parts?.[0]?.text || (currentLanguage === 'hi' ? "छवि का विश्लेषण नहीं किया जा सका।" : "Could not analyze image.");
+
+        overlayBox.innerText = message;
+        speak(message, currentLanguage);
+      } catch (err) {
+        overlayBox.innerText = currentLanguage === 'hi' ? "विश्लेषण विफल रहा।" : "Failed to analyze.";
+        console.error(err);
+      } finally {
+        analyzing = false;
+      }
     }
 
-    main();
+    function startVoiceCommand() {
+      const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+      recognition.lang = 'hi-IN';
+      recognition.interimResults = false;
+      recognition.continuous = true;
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[event.results.length - 1][0].transcript.trim().toLowerCase();
+        console.log("आपने कहा:", transcript);
+
+        const keywords = [
+          "what is this",
+          "what's this",
+          "ye kya hai",
+          "यह क्या है",
+          "व्हाट इस दिस"
+        ];
+
+        const matched = keywords.some(phrase => transcript.includes(phrase));
+        if (matched) {
+          scanWithGemini();
+        } else {
+          console.log("No command detected. Listening continues...");
+        }
+      };
+
+
+      recognition.onerror = (e) => console.error("Speech error:", e);
+      recognition.start();
+    }
+
+    switchBtn.addEventListener('click', () => {
+      usingFrontCamera = !usingFrontCamera;
+      setupWebcam();
+    });
+
+    languageBtn.addEventListener('click', () => {
+      currentLanguage = currentLanguage === 'en' ? 'hi' : 'en';
+      languageBtn.innerText = currentLanguage === 'en' ? 'Convert to Hindi' : 'Convert to English';
+      overlayBox.innerText = currentLanguage === 'hi' ? "JARVIS ऑनलाइन है..." : "JARVIS is online...";
+    });
+
+    setupWebcam().then(() => {
+      startVoiceCommand();
+      requestAnimationFrame(updateVideoCanvas);
+    });
+
+    function updateVideoCanvas() {
+      if (video.readyState >= 2) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      }
+      requestAnimationFrame(updateVideoCanvas);
+    }
   </script>
 </body>
 </html>
