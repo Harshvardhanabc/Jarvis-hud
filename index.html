@@ -32,7 +32,7 @@
       font-size: 16px;
       z-index: 3;
     }
-    #switchBtn, #languageBtn {
+    #switchBtn, #languageBtn, #micBtn {
       position: absolute;
       top: 20px;
       padding: 10px 20px;
@@ -46,6 +46,7 @@
     }
     #switchBtn { left: 20px; }
     #languageBtn { right: 20px; }
+    #micBtn { top: 70px; right: 20px; }
   </style>
 </head>
 <body>
@@ -53,6 +54,7 @@
   <canvas id="canvas"></canvas>
   <button id="switchBtn">Switch Camera</button>
   <button id="languageBtn">Convert to Hindi</button>
+  <button id="micBtn">Activate Mic</button>
   <div id="overlayBox">JARVIS is online...</div>
 
   <script>
@@ -62,12 +64,14 @@
     const overlayBox = document.getElementById('overlayBox');
     const switchBtn = document.getElementById('switchBtn');
     const languageBtn = document.getElementById('languageBtn');
+    const micBtn = document.getElementById('micBtn');
 
     let stream;
     let apiKey = '';
     let usingFrontCamera = false;
     let analyzing = false;
     let currentLanguage = 'en';
+    let recognition;
 
     fetch("api.txt")
       .then(res => res.text())
@@ -151,33 +155,28 @@
     }
 
     function startVoiceCommand() {
-      const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-      recognition.lang = 'hi-IN';
+      if (recognition) recognition.stop();
+
+      recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+      recognition.lang = currentLanguage === 'hi' ? 'hi-IN' : 'en-US';
       recognition.interimResults = false;
       recognition.continuous = true;
 
       recognition.onresult = (event) => {
         const transcript = event.results[event.results.length - 1][0].transcript.trim().toLowerCase();
         console.log("आपने कहा:", transcript);
-
-        const keywords = [
-          "what is this",
-          "what's this",
-          "ye kya hai",
-          "यह क्या है",
-          "व्हाट इस दिस"
-        ];
-
-        const matched = keywords.some(phrase => transcript.includes(phrase));
-        if (matched) {
+        if (
+          transcript.includes("what is this") ||
+          transcript.includes("यह क्या है") ||
+          transcript.includes("ye kya hai") ||
+          transcript.includes("व्हाट इस दिस")
+        ) {
           scanWithGemini();
-        } else {
-          console.log("No command detected. Listening continues...");
         }
       };
 
-
       recognition.onerror = (e) => console.error("Speech error:", e);
+      recognition.onend = () => console.warn("Voice recognition stopped.");
       recognition.start();
     }
 
@@ -190,6 +189,11 @@
       currentLanguage = currentLanguage === 'en' ? 'hi' : 'en';
       languageBtn.innerText = currentLanguage === 'en' ? 'Convert to Hindi' : 'Convert to English';
       overlayBox.innerText = currentLanguage === 'hi' ? "JARVIS ऑनलाइन है..." : "JARVIS is online...";
+    });
+
+    micBtn.addEventListener('click', () => {
+      startVoiceCommand();
+      overlayBox.innerText = currentLanguage === 'hi' ? "माइक्रोफोन फिर से सक्रिय किया गया।" : "Microphone reactivated.";
     });
 
     setupWebcam().then(() => {
