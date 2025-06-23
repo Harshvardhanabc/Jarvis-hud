@@ -69,7 +69,7 @@
     let analyzing = false;
     let currentLanguage = 'en';
 
-    fetch("gemini_key.txt")
+    fetch("api.txt")
       .then(res => res.text())
       .then(key => apiKey = key.trim());
 
