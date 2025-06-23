@@ -175,8 +175,17 @@
         }
       };
 
-      recognition.onerror = (e) => console.error("Speech error:", e);
-      recognition.onend = () => console.warn("Voice recognition stopped.");
+      recognition.onerror = (e) => {
+        console.error("Speech error:", e);
+        recognition.stop();
+        setTimeout(() => startVoiceCommand(), 1000);
+      };
+
+      recognition.onend = () => {
+        console.warn("Voice recognition stopped. Restarting...");
+        setTimeout(() => startVoiceCommand(), 1000);
+      };
+
       recognition.start();
     }
 
